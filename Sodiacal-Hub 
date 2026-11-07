@@ -1,0 +1,420 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+    Name = "Utility",
+    LoadingTitle = "Loading",
+    LoadingSubtitle = "",
+    ConfigurationSaving = {Enabled = false},
+    KeySystem = false
+})
+
+local ESPEnabled = false
+local ESPColor = Color3.fromRGB(255, 60, 60)
+local ESPModes = {Box = false, Chams = false, Outline = false, Skeleton = false, Tracers = false}
+
+local HitboxEnabled = false
+local HitboxMode = "Body"
+local HitboxSize = 5
+local HitboxTransparency = 0.5
+local HitboxVisibleCheck = false
+
+local espData = {}
+local hitboxData = {}
+
+local function isVisible(part)
+    if not part then return false end
+    local origin = Camera.CFrame.Position
+    local dir = part.Position - origin
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+    rayParams.IgnoreWater = true
+    local result = workspace:Raycast(origin, dir, rayParams)
+    if result then
+        local hitChar = result.Instance:FindFirstAncestorOfClass("Model")
+        if hitChar and Players:GetPlayerFromCharacter(hitChar) then
+            return true
+        end
+        return false
+    end
+    return true
+end
+
+local function clearESP(player)
+    local d = espData[player]
+    if d then
+        if d.Highlight then d.Highlight:Destroy() end
+        if d.Box then d.Box:Destroy() end
+        if d.Outline then d.Outline:Destroy() end
+        if d.Skeleton then
+            for _, l in pairs(d.Skeleton) do l:Destroy() end
+        end
+        if d.Tracer then d.Tracer:Destroy() end
+        espData[player] = nil
+    end
+end
+
+local function createESP(player)
+    if player == LocalPlayer then return end
+    local char = player.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return end
+    if espData[player] and espData[player].Character == char then return end
+
+    clearESP(player)
+
+    local data = {Character = char}
+
+    if ESPModes.Chams then
+        local h = Instance.new("Highlight")
+        h.FillColor = ESPColor
+        h.OutlineColor = ESPColor
+        h.FillTransparency = 0.5
+        h.OutlineTransparency = 1
+        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Parent = char
+        data.Highlight = h
+    end
+
+    if ESPModes.Outline then
+        local h = Instance.new("Highlight")
+        h.FillTransparency = 1
+        h.OutlineColor = ESPColor
+        h.OutlineTransparency = 0
+        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Parent = char
+        data.Outline = h
+    end
+
+    if ESPModes.Box then
+        local box = Instance.new("BoxHandleAdornment")
+        box.Adornee = hrp
+        box.Size = Vector3.new(4, 6, 4)
+        box.AlwaysOnTop = true
+        box.ZIndex = 5
+        box.Transparency = 0.5
+        box.Color3 = ESPColor
+        box.Parent = char
+        data.Box = box
+    end
+
+    if ESPModes.Skeleton then
+        data.Skeleton = {}
+        local connections = {
+            {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"},
+            {"UpperTorso", "LeftUpperArm"}, {"LeftUpperArm", "LeftLowerArm"},
+            {"LeftLowerArm", "LeftHand"}, {"UpperTorso", "RightUpperArm"},
+            {"RightUpperArm", "RightLowerArm"}, {"RightLowerArm", "RightHand"},
+            {"LowerTorso", "LeftUpperLeg"}, {"LeftUpperLeg", "LeftLowerLeg"},
+            {"LeftLowerLeg", "LeftFoot"}, {"LowerTorso", "RightUpperLeg"},
+            {"RightUpperLeg", "RightLowerLeg"}, {"RightLowerLeg", "RightFoot"}
+        }
+        for _, pair in ipairs(connections) do
+            local a = char:FindFirstChild(pair[1])
+            local b = char:FindFirstChild(pair[2])
+            if a and b then
+                local line = Instance.new("LineHandleAdornment")
+                line.Adornee = a
+                line.Thickness = 2
+                line.Color3 = ESPColor
+                line.AlwaysOnTop = true
+                line.ZIndex = 5
+                line.Length = (a.Position - b.Position).Magnitude
+                line.Parent = char
+                table.insert(data.Skeleton, line)
+            end
+        end
+    end
+
+    if ESPModes.Tracers then
+        local line = Instance.new("LineHandleAdornment")
+        line.Adornee = hrp
+        line.Thickness = 2
+        line.Color3 = ESPColor
+        line.AlwaysOnTop = true
+        line.ZIndex = 5
+        line.Length = 100
+        line.Parent = char
+        data.Tracer = line
+    end
+
+    espData[player] = data
+end
+
+local function refreshESP()
+    for p, _ in pairs(espData) do
+        if not p.Parent or not p.Character or not p.Character.Parent then clearESP(p) end
+    end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then createESP(p) end
+    end
+end
+
+local function restoreHitbox(player)
+    local d = hitboxData[player]
+    if d and d.Part and d.Part.Parent then
+        d.Part.Size = d.Size
+        d.Part.Transparency = d.Transparency
+        d.Part.Material = d.Material
+        d.Part.BrickColor = d.BrickColor
+    end
+    hitboxData[player] = nil
+end
+
+local function applyHitbox(player)
+    if player == LocalPlayer then return end
+    local char = player.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+
+    local part = (HitboxMode == "Head") and char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+    if not part then return end
+
+    if HitboxVisibleCheck and not isVisible(part) then
+        restoreHitbox(player)
+        return
+    end
+
+    if hitboxData[player] and hitboxData[player].Part == part then
+        part.Size = Vector3.new(HitboxSize, HitboxSize, HitboxSize)
+        part.Transparency = HitboxTransparency
+        return
+    end
+
+    restoreHitbox(player)
+    hitboxData[player] = {
+        Part = part,
+        Size = part.Size,
+        Transparency = part.Transparency,
+        Material = part.Material,
+        BrickColor = part.BrickColor
+    }
+    part.Size = Vector3.new(HitboxSize, HitboxSize, HitboxSize)
+    part.Transparency = HitboxTransparency
+    part.Material = Enum.Material.Neon
+    part.BrickColor = BrickColor.new("Really red")
+end
+
+local function refreshHitbox()
+    if not HitboxEnabled then return end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then applyHitbox(p) end
+    end
+end
+
+local function cleanHitboxes()
+    for p, _ in pairs(hitboxData) do restoreHitbox(p) end
+end
+
+local function onCharAdded(player, char)
+    task.wait(0.3)
+    if ESPEnabled then createESP(player) end
+    if HitboxEnabled then applyHitbox(player) end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.Died:Connect(function() restoreHitbox(player) end)
+    end
+end
+
+local function onPlayerAdded(player)
+    if player == LocalPlayer then return end
+    player.CharacterAdded:Connect(function(c) onCharAdded(player, c) end)
+    if player.Character then onCharAdded(player, player.Character) end
+end
+
+local function onPlayerRemoving(player)
+    clearESP(player)
+    restoreHitbox(player)
+end
+
+for _, p in ipairs(Players:GetPlayers()) do onPlayerAdded(p) end
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(onPlayerRemoving)
+
+local acc = 0
+RunService.Heartbeat:Connect(function(dt)
+    acc = acc + dt
+    if acc >= 0.25 then
+        acc = 0
+        if ESPEnabled then
+            refreshESP()
+            for p, d in pairs(espData) do
+                if d.Tracer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                    local target = p.Character.HumanoidRootPart.Position
+                    local origin = Camera.CFrame.Position + Camera.CFrame.LookVector * 2 - Vector3.new(0, 1.5, 0)
+                    local dist = (target - origin).Magnitude
+                    d.Tracer.Adornee = p.Character.HumanoidRootPart
+                    d.Tracer.Length = dist
+                    d.Tracer.CFrame = CFrame.lookAt(origin, target) * CFrame.Angles(math.rad(90), 0, 0)
+                end
+            end
+        end
+        if HitboxEnabled and HitboxVisibleCheck then refreshHitbox() end
+    end
+end)
+
+local ESPTab = Window:CreateTab("ESP", 4483362458)
+ESPTab:CreateSection("Status")
+
+ESPTab:CreateToggle({
+    Name = "Enable ESP",
+    CurrentValue = false,
+    Flag = "esp_on",
+    Callback = function(v)
+        ESPEnabled = v
+        if v then refreshESP()
+        else
+            for _, d in pairs(espData) do
+                if d.Highlight then d.Highlight.Enabled = false end
+                if d.Box then d.Box.Visible = false end
+                if d.Outline then d.Outline.Enabled = false end
+                if d.Tracer then d.Tracer.Visible = false end
+                if d.Skeleton then for _, l in pairs(d.Skeleton) do l.Visible = false end end
+            end
+        end
+    end
+})
+
+ESPTab:CreateSection("Modes")
+
+local modeToggles = {"Box", "Chams", "Outline", "Skeleton", "Tracers"}
+for _, m in ipairs(modeToggles) do
+    ESPTab:CreateToggle({
+        Name = m,
+        CurrentValue = false,
+        Flag = "esp_mode_" .. m,
+        Callback = function(v)
+            ESPModes[m] = v
+            if ESPEnabled then
+                for p, _ in pairs(espData) do clearESP(p) end
+                refreshESP()
+            end
+        end
+    })
+end
+
+ESPTab:CreateSection("Color")
+
+local colorPresets = {
+    Red = Color3.fromRGB(255, 60, 60),
+    Green = Color3.fromRGB(60, 255, 60),
+    Blue = Color3.fromRGB(60, 60, 255),
+    Yellow = Color3.fromRGB(255, 255, 60),
+    Purple = Color3.fromRGB(180, 60, 255),
+    Cyan = Color3.fromRGB(60, 255, 255),
+    White = Color3.fromRGB(255, 255, 255)
+}
+
+ESPTab:CreateDropdown({
+    Name = "Color Preset",
+    Options = {"Red", "Green", "Blue", "Yellow", "Purple", "Cyan", "White", "Custom"},
+    CurrentOption = {"Red"},
+    MultipleOptions = false,
+    Flag = "esp_color_preset",
+    Callback = function(opts)
+        local c = opts[1]
+        if c ~= "Custom" and colorPresets[c] then
+            ESPColor = colorPresets[c]
+            for _, d in pairs(espData) do
+                if d.Highlight then d.Highlight.FillColor = ESPColor; d.Highlight.OutlineColor = ESPColor end
+                if d.Box then d.Box.Color3 = ESPColor end
+                if d.Outline then d.Outline.OutlineColor = ESPColor end
+                if d.Tracer then d.Tracer.Color3 = ESPColor end
+                if d.Skeleton then for _, l in pairs(d.Skeleton) do l.Color3 = ESPColor end end
+            end
+        end
+    end
+})
+
+ESPTab:CreateColorPicker({
+    Name = "Custom Color",
+    Color = ESPColor,
+    Flag = "esp_color_custom",
+    Callback = function(c)
+        ESPColor = c
+        for _, d in pairs(espData) do
+            if d.Highlight then d.Highlight.FillColor = c; d.Highlight.OutlineColor = c end
+            if d.Box then d.Box.Color3 = c end
+            if d.Outline then d.Outline.OutlineColor = c end
+            if d.Tracer then d.Tracer.Color3 = c end
+            if d.Skeleton then for _, l in pairs(d.Skeleton) do l.Color3 = c end end
+        end
+    end
+})
+
+local HitboxTab = Window:CreateTab("Hitbox", 4483362458)
+HitboxTab:CreateSection("Config")
+
+HitboxTab:CreateToggle({
+    Name = "Enable Hitbox",
+    CurrentValue = false,
+    Flag = "hb_on",
+    Callback = function(v)
+        HitboxEnabled = v
+        if v then refreshHitbox() else cleanHitboxes() end
+    end
+})
+
+HitboxTab:CreateDropdown({
+    Name = "Mode",
+    Options = {"Body", "Head"},
+    CurrentOption = {"Body"},
+    MultipleOptions = false,
+    Flag = "hb_mode",
+    Callback = function(opts)
+        HitboxMode = opts[1]
+        if HitboxEnabled then cleanHitboxes(); task.wait(0.1); refreshHitbox() end
+    end
+})
+
+HitboxTab:CreateSlider({
+    Name = "Size",
+    Range = {2, 20},
+    Increment = 1,
+    Suffix = " studs",
+    CurrentValue = 5,
+    Flag = "hb_size",
+    Callback = function(v)
+        HitboxSize = v
+        if HitboxEnabled then refreshHitbox() end
+    end
+})
+
+HitboxTab:CreateSlider({
+    Name = "Transparency",
+    Range = {0.1, 1.0},
+    Increment = 0.1,
+    Suffix = "",
+    CurrentValue = 0.5,
+    Flag = "hb_transparency",
+    Callback = function(v)
+        HitboxTransparency = v
+        if HitboxEnabled then refreshHitbox() end
+    end
+})
+
+HitboxTab:CreateToggle({
+    Name = "Visible Check",
+    CurrentValue = false,
+    Flag = "hb_visible",
+    Callback = function(v)
+        HitboxVisibleCheck = v
+        if HitboxEnabled then refreshHitbox() end
+    end
+})
+
+HitboxTab:CreateButton({
+    Name = "Reset All Hitboxes",
+    Callback = function()
+        cleanHitboxes()
+        HitboxEnabled = false
+    end
+})
